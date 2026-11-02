@@ -1,0 +1,8 @@
+# 复制这个文件为 local.properties，填入自己的值
+# local.properties 不会被提交到仓库
+
+sdk.dir=C\:\\Users\\<你的用户名>\\AppData\\Local\\Android\\Sdk
+
+# 智谱开放平台 https://open.bigmodel.cn 领取的 Key
+# 留空则 App 启动后需要在设置里手动填写
+zhipu.key=
