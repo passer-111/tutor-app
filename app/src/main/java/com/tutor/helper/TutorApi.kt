@@ -253,6 +253,14 @@ class TutorApi(
         throw lastError ?: IllegalStateException("没有可用的模型")
     }
 
+    @Volatile
+    private var currentCall: okhttp3.Call? = null
+
+    /** 从外部打断正在飞的请求 */
+    fun cancel() {
+        runCatching { currentCall?.cancel() }
+    }
+
     private fun post(body: JSONObject): String {
         val request = Request.Builder()
             .url(ENDPOINT)
@@ -261,23 +269,29 @@ class TutorApi(
             .post(body.toString().toRequestBody(JSON_MEDIA))
             .build()
 
-        client.newCall(request).execute().use { response ->
-            val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                throw ApiException(response.code, "接口返回 ${response.code}：${raw.take(160)}")
-            }
-            val content = JSONObject(raw)
-                .getJSONArray("choices")
-                .getJSONObject(0)
-                .getJSONObject("message")
-                .getString("content")
-            android.util.Log.d("TutorRaw", content.take(1200))
+        val call = client.newCall(request)
+        currentCall = call
+        try {
+            call.execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    throw ApiException(response.code, "接口返回 ${response.code}：${raw.take(160)}")
+                }
+                val content = JSONObject(raw)
+                    .getJSONArray("choices")
+                    .getJSONObject(0)
+                    .getJSONObject("message")
+                    .getString("content")
+                android.util.Log.d("TutorRaw", content.take(1200))
 
-            // 模型偶尔返回空内容，当成可重试错误，让调用方换下一个模型
-            if (content.isBlank()) {
-                throw ApiException(503, "模型返回了空内容")
+                // 模型偶尔返回空内容，当成可重试错误，让调用方换下一个模型
+                if (content.isBlank()) {
+                    throw ApiException(503, "模型返回了空内容")
+                }
+                return content
             }
-            return content
+        } finally {
+            currentCall = null
         }
     }
 

@@ -79,6 +79,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -154,6 +155,8 @@ fun TutorScreen() {
     var photoUri by remember { mutableStateOf<Uri?>(null) }
     var pendingUri by remember { mutableStateOf<Uri?>(null) }
     var pendingThumb by remember { mutableStateOf("") }
+    var currentJob by remember { mutableStateOf<Job?>(null) }
+    var currentApi by remember { mutableStateOf<TutorApi?>(null) }
     val listState = rememberLazyListState()
 
     fun nextId(): Long {
@@ -209,6 +212,7 @@ fun TutorScreen() {
         val t0 = System.currentTimeMillis()
         try {
             val api = TutorApi(store.apiKey)
+            currentApi = api
             val reply = api.explain(imageBase64, userText, history)
 
             when (reply.mode) {
@@ -386,13 +390,30 @@ fun TutorScreen() {
                     )
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
+            // 用户主动点了停止，OkHttp 抛的是 IOException("Canceled")，不算错误
+            if (e is java.io.IOException && e.message?.contains("Canceled", true) == true) return
             append(Msg(nextId(), false, text = friendlyError(e)))
         } finally {
             android.util.Log.d("TutorTiming", "total " + (System.currentTimeMillis() - t0) + "ms")
+            currentApi = null
+            currentJob = null
             loading = false
             status = ""
         }
+    }
+
+    /** 打断当前这一轮请求 */
+    fun stop() {
+        currentApi?.cancel()
+        currentJob?.cancel()
+        currentApi = null
+        currentJob = null
+        loading = false
+        status = ""
+        append(Msg(nextId(), false, text = "好的，停下了。"))
     }
 
     fun sendImage(uri: Uri, note: String) {
@@ -416,7 +437,7 @@ fun TutorScreen() {
         loading = true
         status = "正在看这道题…"
 
-        scope.launch {
+        currentJob = scope.launch {
             val base64 = try {
                 compressToBase64(context, uri)
             } catch (e: Exception) {
@@ -451,7 +472,7 @@ fun TutorScreen() {
         append(Msg(nextId(), true, text = note))
         loading = true
         status = "正在想…"
-        scope.launch {
+        currentJob = scope.launch {
             doRequest(null, note, history)
         }
     }
@@ -466,9 +487,10 @@ fun TutorScreen() {
         loading = true
         status = "正在出一道同类题…"
 
-        scope.launch {
+        currentJob = scope.launch {
             try {
                 val api = TutorApi(store.apiKey)
+                currentApi = api
                 val brief = buildString {
                     append("原题：").append(source.problemText.ifBlank { source.knowledgePoint }).append('\n')
                     append("考查的知识点：").append(source.knowledgePoint).append('\n')
@@ -507,9 +529,14 @@ fun TutorScreen() {
                         note = if (r.passed) "同类练习 · 已审核" else "同类练习 · 已修正",
                     )
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
+                if (e is java.io.IOException && e.message?.contains("Canceled", true) == true) return@launch
                 append(Msg(nextId(), false, text = friendlyError(e)))
             } finally {
+                currentApi = null
+                currentJob = null
                 loading = false
                 status = ""
             }
@@ -588,6 +615,7 @@ fun TutorScreen() {
 
         BottomBar(
             enabled = !loading,
+            loading = loading,
             input = input,
             onInputChange = { input = it },
             pendingThumb = pendingThumb,
@@ -596,6 +624,7 @@ fun TutorScreen() {
                 pendingThumb = ""
             },
             onSend = { send() },
+            onStop = { stop() },
             onCamera = { openCamera() },
             onGallery = { galleryLauncher.launch("image/*") }
         )
@@ -1035,11 +1064,13 @@ private fun LoadingItem(status: String) {
 @Composable
 private fun BottomBar(
     enabled: Boolean,
+    loading: Boolean,
     input: String,
     onInputChange: (String) -> Unit,
     pendingThumb: String,
     onClearPending: () -> Unit,
     onSend: () -> Unit,
+    onStop: () -> Unit,
     onCamera: () -> Unit,
     onGallery: () -> Unit,
 ) {
@@ -1110,18 +1141,28 @@ private fun BottomBar(
             )
             Spacer(Modifier.width(10.dp))
             Button(
-                onClick = onSend,
-                enabled = enabled && (input.isNotBlank() || pendingThumb.isNotBlank()),
+                onClick = if (loading) onStop else onSend,
+                enabled = if (loading) true else (input.isNotBlank() || pendingThumb.isNotBlank()),
                 modifier = Modifier.size(52.dp),
                 shape = CircleShape,
                 contentPadding = PaddingValues(0.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = color.primary)
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "发送",
-                    modifier = Modifier.size(20.dp)
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (loading) color.onSurfaceVariant else color.primary
                 )
+            ) {
+                if (loading) {
+                    Box(
+                        Modifier
+                            .size(14.dp)
+                            .background(Color.White, RoundedCornerShape(3.dp))
+                    )
+                } else {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "发送",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
 
