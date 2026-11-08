@@ -121,7 +121,7 @@ class TutorApi(
 
         val messages = JSONArray().apply {
             put(JSONObject().put("role", "system").put("content", SYSTEM_PROMPT))
-            history.takeLast(4).forEach { (role, text) ->
+            history.takeLast(6).forEach { (role, text) ->
                 put(JSONObject().put("role", role).put("content", text))
             }
             put(JSONObject().put("role", "user").put("content", userContent))
@@ -363,7 +363,15 @@ class TutorApi(
     private fun parseJsonObject(text: String): JSONObject {
         val raw = extractJson(text)
         if (raw == "{}") {
-            throw JSONException("模型没有返回 JSON")
+            // 模型忘了套 JSON、直接说了人话，把它当成讲解内容兜住
+            val plain = text.trim()
+            if (plain.isNotEmpty()) {
+                return JSONObject().apply {
+                    put("mode", "explain")
+                    put("explanation", plain)
+                }
+            }
+            throw JSONException("模型没有返回内容")
         }
 
         // 1. 正常解析
@@ -456,6 +464,12 @@ class TutorApi(
             讲完可以举一个最小的例子说明，但不要针对孩子正在做的具体题目算出答案。
             篇幅控制在 200 字以内，讲完就停，不要分点罗列也不要反复总结。
 
+            【孩子说"更多"的时候】
+            先看对话里已经讲过什么，然后只给没有提过的内容。
+            已经出现过的公式、例子、说法，一律不要再重复一遍。
+            如果确实没有更多常见内容了，就直接说"常用的差不多就这些"，
+            再给一个可以继续深挖的方向，不要硬凑。
+
             【practice 的规则】
             参照对话里刚才讲过的题型，出一道同样方法就能解决的新题。
             换数字、换情境，难度相当，条件完整，孩子只靠题目本身就能做。
@@ -489,6 +503,11 @@ class TutorApi(
             }
 
             不适用的字段留空字符串。
+
+            【格式铁律】
+            不管你多想直接说话，输出都必须是一个 JSON 对象。
+            要说「没有更多了」「我讲不好」这类话，也放进对应字段里，
+            绝对不能只输出一句自然语言。
         """.trimIndent()
 
         val REVIEW_PROMPT = """

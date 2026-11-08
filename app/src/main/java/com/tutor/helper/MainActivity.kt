@@ -903,6 +903,11 @@ private fun BodyText(content: String, color: Color) {
     }
 }
 
+/** 公式里会出现的字符，用来判断一个变量名从哪里开始（不含中文） */
+private fun isFormulaChar(c: Char): Boolean =
+    (c in 'a'..'z') || (c in 'A'..'Z') || (c in '0'..'9') ||
+        c in "⁰¹²³⁴⁵⁶⁷⁸⁹ˣᵏⁿ'′()[]{}_√π!."
+
 /** 「例如：」「如下」这类短句挂在行尾很难看，并到下一行开头 */
 private fun mergeOrphan(lines: List<String>): List<String> {
     val out = mutableListOf<String>()
@@ -946,7 +951,9 @@ private fun splitFormulaLine(line: String): List<String> {
     var start = 0
     for (i in 1 until eqPositions.size) {
         var cut = eqPositions[i]
-        while (cut > start && line[cut] != ' ' && line[cut] != '。') cut--
+        while (cut > start && line[cut - 1] == ' ') cut--
+        // 把等号左边的变量名一起带到新行，否则会出现「= 1 + x + ...」这种没头没尾的行
+        while (cut > start && isFormulaChar(line[cut - 1])) cut--
         if (cut > start) {
             result.add(line.substring(start, cut).trim())
             start = cut
