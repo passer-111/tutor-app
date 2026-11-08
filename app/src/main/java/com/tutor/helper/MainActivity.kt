@@ -120,11 +120,12 @@ private data class Msg(
 )
 
 private val LEAK_PATTERNS = listOf(
-    Regex("答案\\s*是"),
+    Regex("答案\\s*(是|为|就是)"),
     Regex("正确(选项|答案)"),
     Regex("选\\s*[A-Da-d](?![\\w\\u4e00-\\u9fa5])"),
-    Regex("[=＝]\\s*[-−]?\\d"),
-    Regex("所以\\s*(结果|得数|答案是)"),
+    // 必须带因果连词才算结论，避免把公式里的 "x=0" 误判成答案
+    Regex("(所以|因此|故|于是)\\s*[^。！？]{0,12}[=＝]\\s*[-−]?\\d"),
+    Regex("最终(结果|答案|得数)"),
 )
 
 private fun looksLikeAnswerLeak(text: String): Boolean =
