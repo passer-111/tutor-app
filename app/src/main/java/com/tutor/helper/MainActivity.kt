@@ -936,21 +936,21 @@ private fun FormulaLine(line: String, color: Color) {
         text = annotated,
         inlineContent = mapOf(
             "frac" to InlineTextContent(
-                Placeholder(20.sp, 24.sp, PlaceholderVerticalAlign.Center)
+                Placeholder(24.sp, 27.sp, PlaceholderVerticalAlign.Center)
             ) { id ->
                 val seg = id.split('\u0000')
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(seg[0], fontSize = 9.sp, lineHeight = 10.sp, color = color)
+                    Text(seg[0], fontSize = 10.sp, lineHeight = 11.sp, color = color)
                     Box(
                         Modifier
-                            .width(16.dp)
+                            .width(19.dp)
                             .height(1.dp)
                             .background(color)
                     )
                     Text(
                         if (seg.size > 1) seg[1] else "",
-                        fontSize = 9.sp,
-                        lineHeight = 10.sp,
+                        fontSize = 10.sp,
+                        lineHeight = 11.sp,
                         color = color
                     )
                 }

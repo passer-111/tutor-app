@@ -272,6 +272,11 @@ class TutorApi(
                 .getJSONObject("message")
                 .getString("content")
             android.util.Log.d("TutorRaw", content.take(1200))
+
+            // 模型偶尔返回空内容，当成可重试错误，让调用方换下一个模型
+            if (content.isBlank()) {
+                throw ApiException(503, "模型返回了空内容")
+            }
             return content
         }
     }
