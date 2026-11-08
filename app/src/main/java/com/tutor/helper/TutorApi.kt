@@ -266,11 +266,13 @@ class TutorApi(
             if (!response.isSuccessful) {
                 throw ApiException(response.code, "接口返回 ${response.code}：${raw.take(160)}")
             }
-            return JSONObject(raw)
+            val content = JSONObject(raw)
                 .getJSONArray("choices")
                 .getJSONObject(0)
                 .getJSONObject("message")
                 .getString("content")
+            android.util.Log.d("TutorRaw", content.take(1200))
+            return content
         }
     }
 

@@ -69,6 +69,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -839,25 +844,103 @@ private fun LabeledBlock(label: String, content: String, accent: Boolean = false
     }
 }
 
-/** 按行拆分渲染，避免一整段文字糊成一坨，编号列表也能自然分行 */
+/** 按行拆分渲染，公式多于两个时按逗号再拆一行一条 */
 @Composable
 private fun BodyText(content: String, color: Color) {
     val lines = remember(content) {
         content.split('\n')
             .map { it.trim() }
             .filter { it.isNotEmpty() }
+            .flatMap { splitFormulaLine(it) }
             .map { prettyMath(it) }
     }
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        lines.forEach { line ->
-            Text(
-                line,
-                fontSize = 15.sp,
-                lineHeight = 25.sp,
-                color = color
-            )
+        lines.forEach { line -> FormulaLine(line, color) }
+    }
+}
+
+/**
+ * 一行里出现多个等号，说明模型把好几条公式挤在一句里了。
+ * 按中文逗号切开，每个带等号的片段单独成行。
+ */
+private fun splitFormulaLine(line: String): List<String> {
+    if (line.count { it == '=' } < 2) return listOf(line)
+    val segs = line.split("，", "；")
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+    return if (segs.count { it.contains('=') } >= 2) segs else listOf(line)
+}
+
+// ---------- 分数渲染 ----------
+
+private sealed class Part {
+    data class Plain(val text: String) : Part()
+    data class Frac(val num: String, val den: String) : Part()
+}
+
+/** 分子分母都限制在 4 个字符内，避免把日期、网址里的斜杠也转成分数 */
+private val FRAC_REGEX =
+    Regex("""([A-Za-z0-9²³⁴⁵⁶⁷⁸⁹ˣ!]{1,4})\s*/\s*([A-Za-z0-9²³⁴⁵⁶⁷⁸⁹!]{1,4})""")
+
+private fun splitFractions(line: String): List<Part> {
+    val parts = mutableListOf<Part>()
+    var last = 0
+    FRAC_REGEX.findAll(line).forEach { m ->
+        if (m.range.first > last) {
+            parts.add(Part.Plain(line.substring(last, m.range.first)))
+        }
+        parts.add(Part.Frac(m.groupValues[1], m.groupValues[2]))
+        last = m.range.last + 1
+    }
+    if (last < line.length) parts.add(Part.Plain(line.substring(last)))
+    return parts
+}
+
+@Composable
+private fun FormulaLine(line: String, color: Color) {
+    val parts = remember(line) { splitFractions(line) }
+    if (parts.none { it is Part.Frac }) {
+        Text(line, fontSize = 15.sp, lineHeight = 25.sp, color = color)
+        return
+    }
+
+    val annotated = buildAnnotatedString {
+        parts.forEach { p ->
+            when (p) {
+                is Part.Plain -> append(p.text)
+                is Part.Frac -> appendInlineContent("frac", p.num + "\u0000" + p.den)
+            }
         }
     }
+
+    Text(
+        text = annotated,
+        inlineContent = mapOf(
+            "frac" to InlineTextContent(
+                Placeholder(26.sp, 30.sp, PlaceholderVerticalAlign.Center)
+            ) { id ->
+                val seg = id.split('\u0000')
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(seg[0], fontSize = 11.sp, lineHeight = 12.sp, color = color)
+                    Box(
+                        Modifier
+                            .width(24.dp)
+                            .height(1.dp)
+                            .background(color)
+                    )
+                    Text(
+                        if (seg.size > 1) seg[1] else "",
+                        fontSize = 11.sp,
+                        lineHeight = 12.sp,
+                        color = color
+                    )
+                }
+            }
+        ),
+        fontSize = 15.sp,
+        lineHeight = 25.sp,
+        color = color
+    )
 }
 
 private val SUPERSCRIPTS = mapOf(
