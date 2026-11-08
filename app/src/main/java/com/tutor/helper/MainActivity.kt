@@ -184,6 +184,7 @@ fun TutorScreen() {
     }
 
     fun friendlyError(e: Exception): String = when {
+        e is org.json.JSONException -> "回答格式没对上，再问我一次试试。"
         e is ApiException && e.isAuthError -> "接口 Key 好像不对，请让家长检查设置。"
         e is ApiException && e.code == 429 -> "老师现在有点忙，过一会儿再问我吧。"
         e is ApiException -> "服务暂时用不了（" + e.code + "），稍后再试。"
@@ -208,7 +209,31 @@ fun TutorScreen() {
 
                 Mode.EXPLAIN -> {
                     status = "正在检查…"
-                    val r = api.review(reply)
+                    val r = runCatching { api.review(reply) }.getOrNull()
+
+                    if (r == null) {
+                        val safeText =
+                            if (looksLikeAnswerLeak(reply.explanation)) "" else reply.explanation
+                        if (safeText.isBlank()) {
+                            append(
+                                Msg(
+                                    nextId(),
+                                    false,
+                                    text = "这个概念我暂时讲不好，你翻翻课本这一节，或者问问老师吧。"
+                                )
+                            )
+                        } else {
+                            append(
+                                Msg(
+                                    nextId(),
+                                    false,
+                                    explanation = safeText,
+                                    note = "审核服务繁忙，已按本地规则检查"
+                                )
+                            )
+                        }
+                        return
+                    }
 
                     var text = if (r.passed) reply.explanation else r.explanation
                     var note = if (r.passed) "已审核" else "已审核 · 已修正"
@@ -236,19 +261,27 @@ fun TutorScreen() {
 
                 Mode.PRACTICE -> {
                     status = "正在检查题目…"
-                    val r = api.reviewSimilar(reply.practiceProblem, reply.answer)
-                    val problem = if (r.passed) reply.practiceProblem else r.revisedProblem
+                    val r = runCatching {
+                        api.reviewSimilar(reply.practiceProblem, reply.answer)
+                    }.getOrNull()
+
+                    val problem = when {
+                        r == null ->
+                            if (looksLikeAnswerLeak(reply.practiceProblem)) "" else reply.practiceProblem
+                        r.passed -> reply.practiceProblem
+                        else -> r.revisedProblem
+                    }
+
                     if (problem.isBlank()) {
                         append(
-                            Msg(
-                                nextId(),
-                                false,
-                                text = "这道练习我不太满意，再跟我要一次。",
-                                note = "已拦下（" +
-                                    r.issues.joinToString("、").ifBlank { "题目不合格" } + "）"
-                            )
+                            Msg(nextId(), false, text = "这道练习我不太满意，再跟我要一次。")
                         )
                     } else {
+                        val note = when {
+                            r == null -> "同类练习 · 本地检查"
+                            r.passed -> "同类练习 · 已审核"
+                            else -> "同类练习 · 已修正"
+                        }
                         append(
                             Msg(
                                 id = nextId(),
@@ -256,7 +289,7 @@ fun TutorScreen() {
                                 problemText = problem,
                                 practiceProblem = problem,
                                 hint = reply.practiceHint,
-                                note = if (r.passed) "同类练习 · 已审核" else "同类练习 · 已修正",
+                                note = note,
                             )
                         )
                     }
@@ -265,7 +298,24 @@ fun TutorScreen() {
 
                 else -> {
                     status = "正在检查有没有泄露答案…"
-                    val r = api.review(reply)
+                    val r = runCatching { api.review(reply) }.getOrNull()
+
+                    if (r == null) {
+                        val safeHint =
+                            if (looksLikeAnswerLeak(reply.hint)) FALLBACK_HINT else reply.hint
+                        append(
+                            Msg(
+                                id = nextId(),
+                                mine = false,
+                                problemText = reply.problemText,
+                                knowledgePoint = reply.knowledgePoint,
+                                hint = safeHint,
+                                question = reply.question,
+                                note = "审核服务繁忙，已按本地规则检查",
+                            )
+                        )
+                        return
+                    }
 
                     var hint = reply.hint
                     var question = reply.question
@@ -763,13 +813,26 @@ private fun LabeledBlock(label: String, content: String, accent: Boolean = false
             letterSpacing = 0.6.sp,
             color = if (accent) color.primary else color.onSurfaceVariant
         )
-        Spacer(Modifier.height(3.dp))
-        Text(
-            content,
-            fontSize = 15.sp,
-            lineHeight = 23.sp,
-            color = color.onSurface
-        )
+        Spacer(Modifier.height(5.dp))
+        BodyText(content, color.onSurface)
+    }
+}
+
+/** 按行拆分渲染，避免一整段文字糊成一坨，编号列表也能自然分行 */
+@Composable
+private fun BodyText(content: String, color: Color) {
+    val lines = remember(content) {
+        content.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        lines.forEach { line ->
+            Text(
+                line,
+                fontSize = 15.sp,
+                lineHeight = 25.sp,
+                color = color
+            )
+        }
     }
 }
 

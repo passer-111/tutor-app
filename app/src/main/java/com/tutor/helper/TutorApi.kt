@@ -88,9 +88,10 @@ class TutorApi(
 ) {
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(50, TimeUnit.SECONDS)
         .build()
 
     // ---------- 第一步：生成讲解（有图走多模态，无图走纯文本） ----------
@@ -198,7 +199,7 @@ class TutorApi(
         }
 
     private fun parseRevised(text: String): RevisedContent {
-        val json = JSONObject(extractJson(text))
+        val json = parseJsonObject(text)
         return RevisedContent(
             hint = json.optString("hint").trim(),
             question = json.optString("question").trim(),
@@ -273,7 +274,7 @@ class TutorApi(
     }
 
     private fun parseReply(text: String): TutorReply {
-        val json = JSONObject(extractJson(text))
+        val json = parseJsonObject(text)
         return TutorReply(
             mode = json.optString("mode").trim().ifBlank { Mode.SOLVE },
             problemText = json.optString("problem_text").trim(),
@@ -288,7 +289,7 @@ class TutorApi(
     }
 
     private fun parseReview(text: String): ReviewResult {
-        val json = JSONObject(extractJson(text))
+        val json = parseJsonObject(text)
         return ReviewResult(
             passed = json.optBoolean("passed", false),
             issues = readIssues(json),
@@ -299,7 +300,7 @@ class TutorApi(
     }
 
     private fun parseSimilar(text: String): SimilarProblem {
-        val json = JSONObject(extractJson(text))
+        val json = parseJsonObject(text)
         return SimilarProblem(
             problem = json.optString("problem").trim(),
             hint = json.optString("hint").trim(),
@@ -308,7 +309,7 @@ class TutorApi(
     }
 
     private fun parseSimilarReview(text: String): SimilarReview {
-        val json = JSONObject(extractJson(text))
+        val json = parseJsonObject(text)
         return SimilarReview(
             passed = json.optBoolean("passed", false),
             issues = readIssues(json),
@@ -331,6 +332,23 @@ class TutorApi(
         val start = text.indexOf('{')
         val end = text.lastIndexOf('}')
         return if (start >= 0 && end > start) text.substring(start, end + 1) else "{}"
+    }
+
+    /**
+     * 模型偶尔会在字符串里写未转义的反斜杠（典型是 LaTeX 的 \frac），
+     * 直接解析会抛 JSONException。先按原样试，失败再把反斜杠整体加倍重试。
+     */
+    private fun parseJsonObject(text: String): JSONObject {
+        val raw = extractJson(text)
+        return try {
+            JSONObject(raw)
+        } catch (e: Exception) {
+            try {
+                JSONObject(raw.replace("\\", "\\\\"))
+            } catch (e2: Exception) {
+                JSONObject("{}")
+            }
+        }
     }
 
     companion object {
@@ -360,6 +378,14 @@ class TutorApi(
             换数字、换情境，难度相当，条件完整，孩子只靠题目本身就能做。
             题目描述里不要出现答案或关键中间结果，只给一条轻提示。
             只出一道，不要一口气出好几道。
+
+            【数学符号写法，很重要】
+            不要使用 LaTeX 语法：不写 \frac、\sqrt、\times、^{}、$ 这类写法。
+            App 不渲染公式，写出来孩子只会看到一堆反斜杠和花括号。
+            改用 Unicode 字符或中文表达：
+              x²、x³、√2、π、×、÷、≤、≥、≠
+              分数写成「3/4」，或者直接说「四分之三」
+            公式太长就拆成几句文字描述，别把符号硬堆在一起。
 
             【绝对禁止】
             不讨论与学习无关的任何话题。
@@ -395,11 +421,14 @@ class TutorApi(
             2. 针对孩子问的这道具体题目，直接算出了最终数值答案。
 
             【重要区分，避免误判】
-            - 概念的定义、原理、公式含义，属于正常教学内容，不算泄露答案。
+            - 定义、定理、公式、通式、性质、典型例子，全部属于知识内容，不是泄露答案。
+            - 例如讲"圆的面积公式是 πr²"，这是正常教学，必须通过。
             - 举例说明中的数字（例如"2、3、5、7 都是质数"）属于说明性举例，不算泄露。
-            - 只有"针对具体题目给出计算结果"才算泄露，例如"所以 x 等于 3"。
+            - 只有"针对孩子问的这道具体题目，直接给出计算结果"才算泄露，
+              例如"你问的这道题，x 等于 3"。
             - 如果输入里没有提供标准答案，说明这是纯概念问题，此时不存在"泄露答案"这回事，
               只要内容与学习相关就应当通过。
+            - 宁可放过正常的知识讲解，也不要因为出现公式或数字就判不合格。
 
             【输出要求】
             只输出一个 JSON 对象，不要代码块标记，不要解释：
@@ -420,9 +449,12 @@ class TutorApi(
 
             【必须做到】
             1. 保留原本想引导的知识点方向和教学意图，不要改成空话套话。
-            2. 删掉任何会泄露最终答案的内容：具体数值、选项字母、结论性断言。
-            3. 仍然要给出一条"下一步做什么"的提示，以及一个引导性的提问。
-            4. 长度不超过原文，语气自然。
+            2. 只删掉"针对具体题目的计算结果"：最终数值、选项字母、"所以答案是"这类断言。
+               公式、定理、定义、通性通法都是知识内容，必须原样保留，不要一起删掉。
+            3. 如果原文其实没有针对具体题目的计算结果（说明它被误判了），
+               那就原样保留，不要为了显得"安全"而删减内容。
+            4. 仍然要给出一条"下一步做什么"的提示，以及一个引导性的提问。
+            5. 长度不超过原文，语气自然。
 
             【输出】
             只输出 JSON：
