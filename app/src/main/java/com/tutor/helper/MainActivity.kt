@@ -209,26 +209,27 @@ fun TutorScreen() {
                 Mode.EXPLAIN -> {
                     status = "正在检查…"
                     val r = api.review(reply)
-                    val text = if (r.passed) reply.explanation else r.explanation
+
+                    var text = if (r.passed) reply.explanation else r.explanation
+                    var note = if (r.passed) "已审核" else "已审核 · 已修正"
+
+                    if (text.isBlank()) {
+                        status = "正在调整说法…"
+                        val revised = api.revise(reply, r.issues)
+                        text = revised.explanation
+                        note = "已审核 · 已改写"
+                    }
+
                     if (text.isBlank()) {
                         append(
                             Msg(
                                 nextId(),
                                 false,
-                                text = "这个我讲得不太好，你翻翻课本这一节，或者问问老师吧。",
-                                note = "内容已拦下（审核未通过：" +
-                                    r.issues.joinToString("、").ifBlank { "判定为不合适" } + "）"
+                                text = "这个概念我讲了两版都不太合适，你翻翻课本这一节，或者问问老师吧。"
                             )
                         )
                     } else {
-                        append(
-                            Msg(
-                                nextId(),
-                                false,
-                                explanation = text,
-                                note = if (r.passed) "已审核" else "已审核 · 已自动修正",
-                            )
-                        )
+                        append(Msg(nextId(), false, explanation = text, note = note))
                     }
                     return
                 }
@@ -266,22 +267,34 @@ fun TutorScreen() {
                     status = "正在检查有没有泄露答案…"
                     val r = api.review(reply)
 
-                    val rescued = r.hint.isNotBlank() && !looksLikeAnswerLeak(r.hint)
-                    if (!r.passed && !rescued) {
-                        append(
-                            Msg(
-                                nextId(),
-                                false,
-                                text = "这道题我先不讲思路，你自己动笔试试，卡在哪一步告诉我。",
-                                note = "内容已拦下（审核未通过：" +
-                                    r.issues.joinToString("、").ifBlank { "疑似泄露答案" } + "）"
-                            )
-                        )
-                        return
+                    var hint = reply.hint
+                    var question = reply.question
+                    var note = "已审核"
+
+                    when {
+                        r.passed -> Unit
+
+                        r.hint.isNotBlank() && !looksLikeAnswerLeak(r.hint) -> {
+                            hint = r.hint
+                            question = r.question.ifBlank { reply.question }
+                            note = "已审核 · 已修正"
+                        }
+
+                        else -> {
+                            status = "正在调整说法…"
+                            val revised = api.revise(reply, r.issues)
+                            if (revised.hint.isNotBlank() && !looksLikeAnswerLeak(revised.hint)) {
+                                hint = revised.hint
+                                question = revised.question.ifBlank { reply.question }
+                                note = "已审核 · 已改写"
+                            } else {
+                                hint = FALLBACK_HINT
+                                question = "你先说说，这道题读到哪一步卡住了？"
+                                note = "已改写两版仍不合规，改用通用提示"
+                            }
+                        }
                     }
 
-                    val hint = if (r.passed) reply.hint else r.hint
-                    val question = if (r.passed) reply.question else r.question
                     val displayHint = if (looksLikeAnswerLeak(hint)) FALLBACK_HINT else hint
 
                     append(
@@ -292,7 +305,7 @@ fun TutorScreen() {
                             knowledgePoint = reply.knowledgePoint,
                             hint = displayHint,
                             question = question,
-                            note = if (r.passed) "已审核" else "已审核 · 已自动修正",
+                            note = note,
                         )
                     )
                 }

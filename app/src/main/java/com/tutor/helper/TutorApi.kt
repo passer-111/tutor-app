@@ -60,6 +60,13 @@ data class SimilarReview(
     val revisedProblem: String,
 )
 
+/** 审核不通过时，让模型自己改一版 */
+data class RevisedContent(
+    val hint: String,
+    val question: String,
+    val explanation: String,
+)
+
 /** 带状态码的接口异常，用来区分「值得重试」和「不必要重试」 */
 class ApiException(val code: Int, message: String) : Exception(message) {
     val retryable: Boolean get() = code == 429 || code >= 500
@@ -153,7 +160,11 @@ class TutorApi(
             append("提示：").append(reply.hint).append('\n')
             append("提问：").append(reply.question).append('\n')
             append("讲解：").append(reply.explanation).append('\n')
-            append("标准答案：").append(reply.answer.ifBlank { "（未提供）" })
+            if (reply.answer.isBlank()) {
+                append("标准答案：（本题没有唯一答案，属于概念性内容，只需判断是否与学习相关）")
+            } else {
+                append("标准答案：").append(reply.answer)
+            }
         }
 
         val messages = JSONArray().apply {
@@ -163,6 +174,36 @@ class TutorApi(
 
         val text = callText(messages)
         parseReview(text)
+    }
+
+    // ---------- 第二步补充：审核没过时，让模型自己改一版 ----------
+
+    suspend fun revise(reply: TutorReply, issues: List<String>): RevisedContent =
+        withContext(Dispatchers.IO) {
+            val payload = buildString {
+                append("模式：").append(reply.mode).append('\n')
+                append("原提示：").append(reply.hint).append('\n')
+                append("原提问：").append(reply.question).append('\n')
+                append("原讲解：").append(reply.explanation).append('\n')
+                append("标准答案（改写结果里绝对不能出现）：")
+                    .append(reply.answer.ifBlank { "（无）" }).append('\n')
+                append("审核指出的问题：")
+                    .append(issues.joinToString("；").ifBlank { "含有答案或不适内容" })
+            }
+            val messages = JSONArray().apply {
+                put(JSONObject().put("role", "system").put("content", REVISE_PROMPT))
+                put(JSONObject().put("role", "user").put("content", payload))
+            }
+            parseRevised(callText(messages))
+        }
+
+    private fun parseRevised(text: String): RevisedContent {
+        val json = JSONObject(extractJson(text))
+        return RevisedContent(
+            hint = json.optString("hint").trim(),
+            question = json.optString("question").trim(),
+            explanation = json.optString("explanation").trim(),
+        )
     }
 
     // ---------- 第三步：举一反三，出一道方法相同的题 ----------
@@ -351,8 +392,14 @@ class TutorApi(
 
             【模式为 explain 时的两条红线】
             1. 出现与学习无关的内容。
-            2. 讲解里顺手算出了某道具体题目的数值答案。
-            注意：概念的定义、原理、公式含义属于正常教学内容，不算泄露答案，不要误判。
+            2. 针对孩子问的这道具体题目，直接算出了最终数值答案。
+
+            【重要区分，避免误判】
+            - 概念的定义、原理、公式含义，属于正常教学内容，不算泄露答案。
+            - 举例说明中的数字（例如"2、3、5、7 都是质数"）属于说明性举例，不算泄露。
+            - 只有"针对具体题目给出计算结果"才算泄露，例如"所以 x 等于 3"。
+            - 如果输入里没有提供标准答案，说明这是纯概念问题，此时不存在"泄露答案"这回事，
+              只要内容与学习相关就应当通过。
 
             【输出要求】
             只输出一个 JSON 对象，不要代码块标记，不要解释：
@@ -366,6 +413,24 @@ class TutorApi(
 
             合格时 passed 为 true，三个 revised 字段留空字符串。
             无法挽救时 revised 也留空，让程序去兜底。
+        """.trimIndent()
+
+        val REVISE_PROMPT = """
+            你是老师，正在修改一段被审核打回的讲题内容。
+
+            【必须做到】
+            1. 保留原本想引导的知识点方向和教学意图，不要改成空话套话。
+            2. 删掉任何会泄露最终答案的内容：具体数值、选项字母、结论性断言。
+            3. 仍然要给出一条"下一步做什么"的提示，以及一个引导性的提问。
+            4. 长度不超过原文，语气自然。
+
+            【输出】
+            只输出 JSON：
+            {
+              "hint": "改写后的提示",
+              "question": "改写后的提问",
+              "explanation": "改写后的讲解，原内容是概念讲解时才填"
+            }
         """.trimIndent()
 
         val SIMILAR_PROMPT = """
