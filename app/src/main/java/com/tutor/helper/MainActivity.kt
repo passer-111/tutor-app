@@ -559,24 +559,30 @@ fun TutorScreen() {
             if (total > 0) listState.animateScrollToItem(total - 1)
         }
 
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            if (msgs.isEmpty()) {
-                item { EmptyState() }
+        if (msgs.isEmpty() && !loading) {
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                EmptyState()
             }
-            items(msgs, key = { it.id }) { m ->
-                MessageItem(
-                    m = m,
-                    enabled = !loading,
-                    onPractice = { requestSimilar(m) }
-                )
-            }
-            if (loading) {
-                item { LoadingItem(status) }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                items(msgs, key = { it.id }) { m ->
+                    MessageItem(
+                        m = m,
+                        enabled = !loading,
+                        onPractice = { requestSimilar(m) }
+                    )
+                }
+                if (loading) {
+                    item { LoadingItem(status) }
+                }
             }
         }
 
@@ -638,9 +644,7 @@ private fun Header(onSettings: () -> Unit) {
 private fun EmptyState() {
     val color = MaterialTheme.colorScheme
     Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(top = 56.dp),
+        Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
@@ -844,19 +848,52 @@ private fun LabeledBlock(label: String, content: String, accent: Boolean = false
     }
 }
 
-/** 按行拆分渲染，公式多于两个时按逗号再拆一行一条 */
+/** 按空行分段落，段内再按行拆，公式句子单独成行 */
 @Composable
 private fun BodyText(content: String, color: Color) {
-    val lines = remember(content) {
-        content.split('\n')
+    val blocks = remember(content) {
+        content.split(Regex("\\n\\s*\\n"))
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .flatMap { splitFormulaLine(it) }
-            .map { prettyMath(it) }
+            .map { block ->
+                mergeOrphan(
+                    block.split('\n')
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .flatMap { splitFormulaLine(it) }
+                ).map { prettyMath(it) }
+            }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        lines.forEach { line -> FormulaLine(line, color) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
+        blocks.forEach { lines ->
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                lines.forEach { line -> FormulaLine(line, color) }
+            }
+        }
     }
+}
+
+/** 「例如：」「如下」这类短句挂在行尾很难看，并到下一行开头 */
+private fun mergeOrphan(lines: List<String>): List<String> {
+    val out = mutableListOf<String>()
+    var i = 0
+    while (i < lines.size) {
+        val cur = lines[i]
+        val next = lines.getOrNull(i + 1)
+        val isOrphan = next != null && cur.length <= 10 &&
+            (cur.endsWith("：") || cur.endsWith(":") ||
+                cur.endsWith("例如") || cur.endsWith("比如") ||
+                cur.endsWith("如下") || cur.endsWith("如下："))
+        if (isOrphan) {
+            out.add(cur + next)
+            i += 2
+        } else {
+            out.add(cur)
+            i += 1
+        }
+    }
+    return out
 }
 
 /**
