@@ -865,10 +865,29 @@ private fun BodyText(content: String, color: Color) {
  */
 private fun splitFormulaLine(line: String): List<String> {
     if (line.count { it == '=' } < 2) return listOf(line)
-    val segs = line.split("，", "；")
+
+    // 情况一：模型用标点隔开了几条公式
+    val byPunct = line.split(Regex("[，；、]|,\\s+|;\\s+"))
         .map { it.trim() }
         .filter { it.isNotEmpty() }
-    return if (segs.count { it.contains('=') } >= 2) segs else listOf(line)
+    if (byPunct.count { it.contains('=') } >= 2) return byPunct
+
+    // 情况二：公式之间只有空格（"eˣ = ... sin(x) = ..."），在每个等号前最近的空格处断
+    val eqPositions = line.indices.filter { line[it] == '=' }
+    if (eqPositions.size < 2) return listOf(line)
+
+    val result = mutableListOf<String>()
+    var start = 0
+    for (i in 1 until eqPositions.size) {
+        var cut = eqPositions[i]
+        while (cut > start && line[cut] != ' ' && line[cut] != '。') cut--
+        if (cut > start) {
+            result.add(line.substring(start, cut).trim())
+            start = cut
+        }
+    }
+    result.add(line.substring(start).trim())
+    return result.filter { it.isNotEmpty() }
 }
 
 // ---------- 分数渲染 ----------
@@ -917,21 +936,21 @@ private fun FormulaLine(line: String, color: Color) {
         text = annotated,
         inlineContent = mapOf(
             "frac" to InlineTextContent(
-                Placeholder(26.sp, 30.sp, PlaceholderVerticalAlign.Center)
+                Placeholder(20.sp, 24.sp, PlaceholderVerticalAlign.Center)
             ) { id ->
                 val seg = id.split('\u0000')
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(seg[0], fontSize = 11.sp, lineHeight = 12.sp, color = color)
+                    Text(seg[0], fontSize = 9.sp, lineHeight = 10.sp, color = color)
                     Box(
                         Modifier
-                            .width(24.dp)
+                            .width(16.dp)
                             .height(1.dp)
                             .background(color)
                     )
                     Text(
                         if (seg.size > 1) seg[1] else "",
-                        fontSize = 11.sp,
-                        lineHeight = 12.sp,
+                        fontSize = 9.sp,
+                        lineHeight = 10.sp,
                         color = color
                     )
                 }
