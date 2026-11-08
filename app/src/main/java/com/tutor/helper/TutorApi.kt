@@ -344,21 +344,74 @@ class TutorApi(
         if (raw == "{}") {
             throw JSONException("模型没有返回 JSON")
         }
-        return try {
-            JSONObject(raw)
-        } catch (e: Exception) {
-            try {
-                JSONObject(raw.replace("\\", "\\\\"))
-            } catch (e2: Exception) {
-                // 绝不能返回空对象，否则界面会渲染出空气泡
-                throw JSONException("回答格式没对上")
-            }
+
+        // 1. 正常解析
+        try {
+            return JSONObject(raw)
+        } catch (_: Exception) {
         }
+
+        // 2. 反斜杠整体加倍后重试
+        try {
+            return JSONObject(raw.replace("\\", "\\\\"))
+        } catch (_: Exception) {
+        }
+
+        // 3. 兜底：JSON 整体已经非法，逐字段把内容抠出来
+        val json = JSONObject()
+        FIELD_NAMES.forEach { key ->
+            extractStringField(raw, key)?.let { if (it.isNotEmpty()) json.put(key, it) }
+        }
+        if (json.length() == 0) {
+            throw JSONException("回答格式没对上")
+        }
+        return json
+    }
+
+    /** 从已经损坏的 JSON 文本里，按字段名手工抠出字符串值 */
+    private fun extractStringField(src: String, key: String): String? {
+        val keyIdx = src.indexOf("\"$key\"")
+        if (keyIdx < 0) return null
+        val colon = src.indexOf(':', keyIdx)
+        if (colon < 0) return null
+        var i = src.indexOf('"', colon)
+        if (i < 0) return null
+        i += 1
+
+        val sb = StringBuilder()
+        while (i < src.length) {
+            val c = src[i]
+            if (c == '\\' && i + 1 < src.length) {
+                when (val n = src[i + 1]) {
+                    'n' -> sb.append('\n')
+                    't' -> sb.append('\t')
+                    'r' -> sb.append(' ')
+                    '"' -> sb.append('"')
+                    '\\' -> sb.append('\\')
+                    // 未知转义（多半是 LaTeX）原样保留，不要吞掉
+                    else -> sb.append('\\').append(n)
+                }
+                i += 2
+                continue
+            }
+            if (c == '"') return sb.toString()
+            sb.append(c)
+            i += 1
+        }
+        return sb.toString()
     }
 
     companion object {
         private const val ENDPOINT = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+
+        /** JSON 损坏时逐个尝试抠取的字段名 */
+        private val FIELD_NAMES = listOf(
+            "mode", "problem_text", "knowledge_point", "hint", "question",
+            "explanation", "practice_problem", "practice_hint", "answer",
+            "passed", "issues", "revised_hint", "revised_question",
+            "revised_explanation", "problem", "revised_problem",
+        )
 
         val SYSTEM_PROMPT = """
             你是一位耐心的中小学老师，正在陪孩子做作业。
@@ -366,7 +419,10 @@ class TutorApi(
             【第一步：判断这次属于哪一类】
             - solve：孩子拍了一张具体的题目，或者描述了一道待解的题 → 引导他自己解
             - explain：孩子在问一个概念、原理、公式是什么意思 → 直接讲清楚
-            - practice：孩子说"再来一道""换一道""多练几道""还有吗"这类 → 出一道新题给他做
+            - practice：孩子明确要"题"才算——说"再来一道""换一道""多练几道""出题给我练"。
+              如果只说"更多""继续""还有吗"这类含糊的话，要看上一轮在做什么：
+                上一轮在讲概念 → 继续讲更多同类内容（判为 explain）
+                上一轮在解题 → 出一道同类新题（判为 practice）
             - off_topic：与学习无关 → 拒绝
 
             【solve 的规则】
@@ -385,13 +441,14 @@ class TutorApi(
             题目描述里不要出现答案或关键中间结果，只给一条轻提示。
             只出一道，不要一口气出好几道。
 
-            【数学符号写法，很重要】
-            不要使用 LaTeX 语法：不写 \frac、\sqrt、\times、^{}、$ 这类写法。
-            App 不渲染公式，写出来孩子只会看到一堆反斜杠和花括号。
-            改用 Unicode 字符或中文表达：
-              x²、x³、√2、π、×、÷、≤、≥、≠
-              分数写成「3/4」，或者直接说「四分之三」
-            公式太长就拆成几句文字描述，别把符号硬堆在一起。
+            【数学符号写法，必须严格遵守】
+            你的回答是 JSON，一个反斜杠就可能让整条内容报废。
+            所以严禁出现反斜杠，也严禁 LaTeX（\frac、\sqrt、\sin、\times、$ 全都不许）。
+            指数一律用 Unicode 上标字符，不要用 ^ 号：
+              正确：x²、x³、x⁴、eˣ
+              错误：x^2、x^3、e^x
+            其他符号：根号写 √2，乘除写 × ÷，分数写 3/4 或「四分之三」。
+            公式长就拆成几行，一行一个公式，不要堆成一坨。
 
             【绝对禁止】
             不讨论与学习无关的任何话题。

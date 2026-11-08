@@ -279,7 +279,11 @@ fun TutorScreen() {
 
                     if (problem.isBlank()) {
                         append(
-                            Msg(nextId(), false, text = "这道练习我不太满意，再跟我要一次。")
+                            Msg(
+                                nextId(),
+                                false,
+                                text = "这题我出得不太顺，你直接说想练哪个知识点吧。"
+                            )
                         )
                     } else {
                         val note = when {
@@ -839,7 +843,10 @@ private fun LabeledBlock(label: String, content: String, accent: Boolean = false
 @Composable
 private fun BodyText(content: String, color: Color) {
     val lines = remember(content) {
-        content.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+        content.split('\n')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { prettyMath(it) }
     }
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         lines.forEach { line ->
@@ -851,6 +858,22 @@ private fun BodyText(content: String, color: Color) {
             )
         }
     }
+}
+
+private val SUPERSCRIPTS = mapOf(
+    '0' to '⁰', '1' to '¹', '2' to '²', '3' to '³', '4' to '⁴',
+    '5' to '⁵', '6' to '⁶', '7' to '⁷', '8' to '⁸', '9' to '⁹',
+    'n' to 'ⁿ', 'x' to 'ˣ', 'y' to 'ʸ',
+)
+
+/** 把模型偶尔漏出来的 x^2 之类写法转成 x²，顺手把星号换成乘号 */
+private fun prettyMath(text: String): String {
+    var s = text
+    s = Regex("""\^\{?([0-9nxy])\}?""").replace(s) { m ->
+        SUPERSCRIPTS[m.groupValues[1].first()]?.toString() ?: m.value
+    }
+    s = s.replace("*", "×")
+    return s
 }
 
 @Composable
