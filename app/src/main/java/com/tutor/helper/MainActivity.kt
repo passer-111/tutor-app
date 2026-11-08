@@ -184,11 +184,15 @@ fun TutorScreen() {
     }
 
     fun friendlyError(e: Exception): String = when {
-        e is org.json.JSONException -> "回答格式没对上，再问我一次试试。"
+        e is org.json.JSONException -> "这次回答乱掉了，再问我一次试试。"
+        e is java.io.InterruptedIOException || e is java.net.SocketTimeoutException ->
+            "等太久了，网络有点慢，再问我一次吧。"
+        e is java.net.UnknownHostException || e is java.net.ConnectException ->
+            "好像没网了，检查一下网络再试。"
         e is ApiException && e.isAuthError -> "接口 Key 好像不对，请让家长检查设置。"
         e is ApiException && e.code == 429 -> "老师现在有点忙，过一会儿再问我吧。"
         e is ApiException -> "服务暂时用不了（" + e.code + "），稍后再试。"
-        else -> "连不上了：" + (e.message ?: "检查一下网络")
+        else -> "出了点小问题，再问我一次吧。"
     }
 
     suspend fun doRequest(
@@ -343,6 +347,18 @@ fun TutorScreen() {
                                 note = "已改写两版仍不合规，改用通用提示"
                             }
                         }
+                    }
+
+                    // 内容为空绝不渲染气泡，否则会出现只剩「已审核」两字的空白卡片
+                    if (hint.isBlank() && question.isBlank()) {
+                        append(
+                            Msg(
+                                nextId(),
+                                false,
+                                text = "这次没想出怎么讲，你再问我一次吧。"
+                            )
+                        )
+                        return
                     }
 
                     val displayHint = if (looksLikeAnswerLeak(hint)) FALLBACK_HINT else hint

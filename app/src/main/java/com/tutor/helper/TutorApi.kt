@@ -7,6 +7,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -340,13 +341,17 @@ class TutorApi(
      */
     private fun parseJsonObject(text: String): JSONObject {
         val raw = extractJson(text)
+        if (raw == "{}") {
+            throw JSONException("模型没有返回 JSON")
+        }
         return try {
             JSONObject(raw)
         } catch (e: Exception) {
             try {
                 JSONObject(raw.replace("\\", "\\\\"))
             } catch (e2: Exception) {
-                JSONObject("{}")
+                // 绝不能返回空对象，否则界面会渲染出空气泡
+                throw JSONException("回答格式没对上")
             }
         }
     }
@@ -369,9 +374,10 @@ class TutorApi(
             只给三样：考查的知识点、一条"下一步做什么"的提示、一个引导他自己想的提问。
 
             【explain 的规则】
-            可以直接讲解概念的定义、原理、公式含义，用孩子能听懂的日常语言。
-            讲完可以举一个最小的例子说明，但不要顺手把某道题的数值答案算出来。
-            篇幅控制在 150 字以内，一段话讲完，不要分点罗列。
+            直接回答孩子问的概念，用孩子能听懂的日常语言。
+            公式本身可以直接写出来，用普通符号（如 x²、√2、π、S=ab），不要用 LaTeX。
+            讲完可以举一个最小的例子说明，但不要针对孩子正在做的具体题目算出答案。
+            篇幅控制在 200 字以内，讲完就停，不要分点罗列也不要反复总结。
 
             【practice 的规则】
             参照对话里刚才讲过的题型，出一道同样方法就能解决的新题。
